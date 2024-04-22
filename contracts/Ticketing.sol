@@ -1,12 +1,13 @@
 pragma solidity ^0.8.13;
 
+// Import necessary contracts from OpenZeppelin library
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 
-
+// Contract definition for a Ticketing System, inheriting ERC721URIStorage
 contract TicketingSystem is ERC721URIStorage {
 
     // define the modifier such that only the deployer can call specific functions
@@ -31,7 +32,7 @@ contract TicketingSystem is ERC721URIStorage {
         uint8 maxTransferCount;
     }
 
-    // event and ticket details global variables
+    // Global variables to store ticket and event details
     string public eventName;
     string public eventDetails;
     bool eventDetailsSet = false;
@@ -42,7 +43,7 @@ contract TicketingSystem is ERC721URIStorage {
     uint8 maxTransferCount;
     bool ticketPriceDetailsSet = false;
 
-    // global state variables, keep track of addresses and available seats
+    // global state variables, keep track of ticket addresses, seats availability and seat prices
     mapping(address => Ticket) public tickets;
     mapping(address => bool) public ownsTicket;
     mapping(string => address) public seats;
@@ -56,7 +57,7 @@ contract TicketingSystem is ERC721URIStorage {
     event TicketCreated(uint256 ticketId, address indexed seatOwner, string seat, uint256 price);
     event TicketTransferred(uint256 ticketId, address indexed originalOwner, address indexed newOwner, string seat, uint256 transferCost);
 
-    // constructor method
+    // Constructor to initialize the contract with the event name
     constructor(string memory _eventName) ERC721("Ticket", "TICKET") {
         eventName = _eventName;
         deployer = msg.sender;
@@ -73,6 +74,7 @@ contract TicketingSystem is ERC721URIStorage {
     }
 
     // method to set the seat details, can only be called by the event deployer
+    // @return boolean true if the seating plan is successfully emitted
     function setSeatingPlanDetails(
         uint8 _seatRows,
         uint8 _seatCols
@@ -88,6 +90,7 @@ contract TicketingSystem is ERC721URIStorage {
         string memory seatRow;
         string memory seatCol;
         uint256 seatPrice;
+        // ensures that each seat has a price associated with it
         for (uint8 i = 1; i <= seatRows; i++) {
             seatRow = convertIntToStr(i);
             for (uint8 j = 1; j <= seatCols; j++) {
@@ -104,12 +107,14 @@ contract TicketingSystem is ERC721URIStorage {
                 seatPrices[seat] = seatPrice;
             }
         }
+        // emits seating plan
         seatingPlanSet = true;
         emit SeatingPlanSet(msg.sender, seatRows, seatCols);
         return true;
     }
     
     // method to set the ticket price details, can only be called by the event deployer
+    // @return boolean true if the setting was successful
     function setTicketPriceDetails(
         uint8 _maxTransferCount)
         public onlyEventDeployer
@@ -117,39 +122,56 @@ contract TicketingSystem is ERC721URIStorage {
             maxTransferCount = _maxTransferCount;
             ticketTransferBaseCost = 0.0001 ether;
             ticketPriceDetailsSet = true;
+            // emit TicketPriceDetails to the messagge sender
             emit TicketPriceDetailsSet(msg.sender,  maxTransferCount, ticketTransferBaseCost);
             return true;
         }
-
+    
+    // method to retrieve the ticket details owned by the caller
+    // @return Ticket memory which is the details of the ticket 
     function getTicketDetails() public view returns (Ticket memory) {   
         Ticket memory ticket = tickets[msg.sender];
         uint256 _ticketId = ticket.ticketId;
+        // require ticketID to be valid else return invalid ticket ID
         require(_ticketId > 0 && _ticketId <= _ticketIds.current(), 
                 "Invalid ticket ID");
         return ticket;
     }
 
+    // method to check if seat is taken
+    // @param _seat the seat identifier
+    // @return boolean true if seat is taken false otherwise
     function isSeatTaken(string memory _seat) public view returns (bool) {
         return !seatAvailability[_seat];
     }
-
+    
+    // method to get total number of tickets
+    // @return number of total tickets
     function getTotalTickets() public view returns (uint256) {
         return seatRows * seatCols;
     }
     
+    // method to get total number of sold tickets
+    // @return number of total tickets sold
     function getTotalSoldTickets() public view returns (uint256) {
         return _ticketIds.current();
     }
 
+    // method to get total number of availble tickets for sake
+    // @return total number of tickets still available
     function getTotalAvailableTickets() public view returns (uint256) {
         return this.getTotalTickets() - this.getTotalSoldTickets();
     }
 
+    // method to get the price of a ticket for a specific seat
+    // @param _seat the seat identifier
+    // @return the price of a ticket for a specific seat
     function getTicketPrice(string memory _seat) public view returns (uint256) {
         return seatPrices[_seat];
     }
 
     // function to create a new ticket, and mint a new NFT
+    // @return the ticketID of the created ticket
     function createTicket(
         string memory _seat,
         string memory _tokenURI
@@ -157,18 +179,23 @@ contract TicketingSystem is ERC721URIStorage {
         // initialize a variable to count gas fees
         uint256 startGas = gasleft();
 
+        // require event details, seating plan and ticket price details to have been properly set
         require(eventDetailsSet, "event details not yet properly set");
         require(seatingPlanSet, "seating plan not yet properly set");
         require(ticketPriceDetailsSet, "ticket details not yet properly set");
+        // require seat have not been taken
         require(!isSeatTaken(_seat), "Seat is already taken");
+        // require message sender have not owned a ticket
         require(!ownsTicket[msg.sender], "You already owned a ticket!");
-
+        
+        // initialize price as the ticket price for the specific seat
         uint256 price = getTicketPrice(_seat);
         require(msg.value >= price, "Insufficient funds");
 
         _ticketIds.increment();
         uint256 ticketId = _ticketIds.current();
 
+        // initialize a ticket object and its details
         Ticket memory newTicket = Ticket({
             eventName: eventName,
             eventDetails: eventDetails,
@@ -179,13 +206,19 @@ contract TicketingSystem is ERC721URIStorage {
             maxTransferCount: maxTransferCount
         });
 
+        // Assign the newly created ticket to the sender's address in the tickets mapping.
         tickets[msg.sender] = newTicket;
+        // Mint a new ERC721 token (NFT) and assign it to the sender's address.
         _mint(msg.sender, ticketId);
+        // Set the metadata URI for the newly minted token.
         _setTokenURI(ticketId, _tokenURI);
-
+        // Associate the seat identifier with the sender's address in the seats mapping, indicating ownership.
         seats[_seat] = msg.sender;
+        // Mark the seat as unavailable by setting its availability to false in the seatAvailability mapping.
         seatAvailability[_seat] = false;
+        // Indicate that the sender owns a ticket 
         ownsTicket[msg.sender] = true;
+
 
         // refund excess funds paid to the contract
         uint256 consumedGas = startGas - gasleft();
@@ -197,11 +230,14 @@ contract TicketingSystem is ERC721URIStorage {
             require(success, "Unable to refund excess fees");
         }
 
+        //  emits an event TicketCreated to update others about the successful creation of a new ticket
         emit TicketCreated(ticketId, msg.sender, _seat, price);
 
         return ticketId;
     }
     
+    // function to transfer the ticket to the recipient
+    // @return bool true if successful
     function transferTicket(
         address _recipient
     ) public payable returns (bool) {
@@ -250,6 +286,8 @@ contract TicketingSystem is ERC721URIStorage {
         return true;
     }
 
+    // function to convert integer to string 
+    // @return the converted integer in string format
     function convertIntToStr(uint8 value) private pure returns (string memory) {
         require(value >= 1 && value <= 26, "Invalid input");
 
